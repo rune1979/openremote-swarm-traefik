@@ -15,8 +15,8 @@ The setup consists of three files; **traefik.yml**, **traefik-deploy.yml** and *
 
 - Traefik needs some configuration, we will provide those in a separate file: **traefik.yml** you need to change two lines in that file.
 > email: your@email.com
->...
-> defaultRule: Host(`domain.com`)
+...
+defaultRule: Host(`domain.com`)
 
 - 
 
