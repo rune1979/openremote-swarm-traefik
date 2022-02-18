@@ -1,0 +1,223 @@
+# OpenRemote v3
+#
+# By default running this profile installs the stack in swarm and the use of DNS ex. https://yourdomain.com and will fetch a
+# LetsEncrypt TLS/SSL certificate, Change the default username 'admin' and password 'secret'.
+#
+# Install Docker Community edition (https://docker.com/) on Windows, macOS, or Linux.
+#
+# Start a demo stack in the project root directory with:
+#
+#   $ docker swarm init (Will setup Swarm for you, it you have already installed Docker Compose)
+#   $ docker stack deploy -c docker-compose.yml openremote
+#
+# Stop the stack:
+#
+#   docker stack rm openremote
+#
+# For full documentation, see https://github.com/openremote/openremote/blob/master/profile/deploy.yml
+ 
+version: '3.8'
+
+networks:
+  private-openremote:
+    driver: overlay
+    driver_opts:
+      encrypted: 'true'
+      attachable: 'false'
+  traefik:
+    external: true
+
+volumes:
+  temp-openremote:
+  deployment-openremote:
+  postgresql-openremote:
+
+services:
+
+  # This configuration uses the manager's deployment-specific data such as map tiles,
+  # console application static resources (HTML, JS, CSS), extensions, and other
+  # configuration files which were baked into the managers image.
+  manager:
+    #image: openremote/manager-swarm:${DATE_TAG:-latest}
+    image: openremote/manager:${DATE_TAG:-latest}
+    #image: openremote/manager:latest
+    networks:
+      - private-openremote
+      - traefik
+    depends_on:
+      - keycloak
+    healthcheck:
+        interval: 3s
+        timeout: 3s
+        start_period: 2s
+        retries: 120
+        test: ["CMD", "curl", "--fail", "--silent", "http://keycloak:8080"]
+    environment:
+
+      # It is important that all services have the same timezone and are time synchronized.
+      # Bearer tokens are only valid for minutes, and authentication fails if Keycloak drifts.
+      # TZ: Europe/Amsterdam
+
+      # If developer mode is enabled, all setup tasks will be executed on application startup.
+      # This will clean all data in the database, and then import demo/test data. Some caching and
+      # other runtime performance-optimizations will also be disabled.
+      DEV_MODE: ${DEV_MODE:-true}
+      # This switch can wipe your database, this is the factory reset!
+      #SETUP_WIPE_CLEAN_INSTALL: ${SETUP_WIPE_CLEAN_INSTALL:-true}
+      SETUP_ADMIN_PASSWORD: ${SETUP_ADMIN_PASSWORD:-secret}
+
+      # When you are ready to permanently install your project, replace it with the next lines...
+      # SETUP_WIPE_CLEAN_INSTALL: # Allow override on CLI
+
+      # Configure SMTP smart host, to send password reset emails etc.
+      #SETUP_EMAIL_HOST: smtp-host.demo.tld
+      #SETUP_EMAIL_USER: 'smtp-user'
+      #SETUP_EMAIL_PASSWORD: 'smtp-password'
+      #SETUP_EMAIL_PORT: 25
+      #SETUP_EMAIL_TLS: 'true'
+      #SETUP_EMAIL_FROM_KEYCLOAK: 'no-reply@openremote.io'
+      #SETUP_EMAIL_FROM_DEFAULT: 'no-reply@openremote.io'
+
+      EXTERNAL_URL: ${EXTERNAL_URL:-https://your.domain}
+      DOMAINNAME: ${DOMAINNAME:-your.domain}
+
+      # WEBSERVER_LISTEN_HOST: ${WEBSERVER_LISTEN_HOST:-0.0.0.0}
+      # The service-internal host name and port of the identity provider.
+      KEYCLOAK_HOST: ${KEYCLOAK_HOST:-keycloak}
+      KEYCLOAK_PORT: ${KEYCLOAK_PORT:-8080}
+
+     
+     # JAVA_OPTS: -Xms400m -Xmx400m
+     #             -XX:CompressedClassSpaceSize=25m -XX:MaxMetaspaceSize=150m
+     #             -XX:InitialCodeCacheSize=50m -XX:ReservedCodeCacheSize=50m
+     #             -XX:MaxDirectMemorySize=25m
+     #             -XX:NativeMemoryTracking=summary
+     #             -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/javadump.core.hprof
+
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.openm.tls=true"
+        - "traefik.http.routers.openm.tls.certresolver=letsencrypt"
+        - "traefik.http.routers.openm.rule=Host(`your.domain`)"
+        - "traefik.http.routers.openm.entrypoints=websecure"
+        - "traefik.http.services.openm.loadbalancer.server.port=8080"
+        # TLS Encryption is enabled but validation is not! 
+        - "traefik.tcp.routers.mqtt.rule=HostSNI(`your.domain`)"
+        - "traefik.tcp.routers.mqtt.entrypoints=mqtts"
+        - "traefik.tcp.routers.mqtt.tls.certresolver=letsencrypt"    
+        - "traefik.tcp.routers.mqtt.service=mqtto"
+        - traefik.tcp.services.mqtto.loadbalancer.server.port=1883
+        #- traefik.tcp.routers.mqtt.tls=true
+
+      replicas: 1
+      # Configure uninterrupted updates with rollback
+      update_config:
+        failure_action: rollback
+        order: start-first
+        delay: 10s
+
+    volumes:
+      - temp-openremote:/tmp
+      
+  keycloak:
+    # This is tested with ${DATE_TAG:-16.0.0.x}
+    image: openremote/keycloak:${DATE_TAG:-latest}
+    networks:
+      - traefik
+      - private-openremote
+    depends_on:
+      - postgresql
+    healthcheck: 
+        test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/auth"]
+        interval: 3s
+        timeout: 3s
+        start_period: 60s
+        retries: 30
+    environment:
+
+      # It is important that all services have the same timezone and are time synchronized.
+      # Bearer tokens are only valid for minutes, and authentication fails if Keycloak drifts.
+      # TZ: Europe/Amsterdam
+
+      # Switch to DEBUG to diagnose Keycloak problems.
+      KEYCLOAK_LOGLEVEL: INFO
+
+      # When you are ready to permanently install your project, replace it with the next line ...
+      # SETUP_ADMIN_PASSWORD: # Allow override on CLI
+      #PROXY_ADDRESS_FORWARDING: ${PROXY_ADDRESS_FORWARDING:-true}
+      # Configure how Keycloak connects to the database
+      KEYCLOAK_FRONTEND_URL: ${EXTERNAL_URL:-https://your.domain}/auth
+
+      # CHANGE THIS PASSWORD BEFORE STARTING THE STACK! THIS IS ONLY FOR DEMO!
+      KEYCLOAK_PASSWORD: ${SETUP_ADMIN_PASSWORD:-secret999}
+
+      # Custom JVM options (increase heap size if required)
+      JAVA_OPTS: -Xms300m -Xmx300m
+        -XX:CompressedClassSpaceSize=50m -XX:MaxMetaspaceSize=250m
+        -XX:InitialCodeCacheSize=50m -XX:ReservedCodeCacheSize=50m
+        -XX:MaxDirectMemorySize=25m
+        -XX:NativeMemoryTracking=summary
+        -XX:+ExitOnOutOfMemoryError
+        -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/javadump.core.hprof
+        -Djava.net.preferIPv4Stack=true -Djboss.modules.system.pkgs=org.jboss.byteman -Djava.awt.headless=true
+
+
+    volumes:
+      - deployment-openremote:/deployment
+
+  
+    deploy:
+      # Traefik lables 
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.keyc.tls=true"
+        - "traefik.http.routers.keyc.tls.certresolver=letsencrypt"
+        # Keycloak will be accessable from this address
+        - "traefik.http.routers.keyc.rule=Host(`keycloak.your.domain`)"
+        - "traefik.http.routers.keyc.entrypoints=websecure"
+        - "traefik.http.services.keyc.loadbalancer.server.port=8080"
+      replicas: 1
+      # Configure uninterrupted updates with rollback
+      update_config:
+        failure_action: rollback
+        order: start-first
+        delay: 10m
+
+  postgresql:
+    # Tested with image ${DATE_TAG:-14.1.0.2}
+    image: openremote/postgresql:${DATE_TAG:-latest}
+    networks:
+      - private-openremote
+      - traefik
+    healthcheck:
+        interval: 3s
+        timeout: 30s
+        start_period: 2s
+        retries: 10
+        test: [ "CMD", "pg_isready", "-q", "-d", "openremote", "-U", "postgres" ]
+    user: postgres
+
+  # environment:
+
+      # It is important that all services have the same timezone and are time synchronized.
+      # Bearer tokens are only valid for minutes, and authentication fails if Keycloak drifts.
+      # TZ: Europe/Amsterdam
+
+      # You can open an SQL console on a running container with:
+      # TZ: ${TZ:-Europe/Amsterdam}
+      # PGTZ: ${PGTZ:-Europe/Amsterdam}
+
+      # docker exec -it <container ID> psql -U openremote
+
+    volumes:
+      - postgresql-openremote:/var/lib/postgresql/data
+      - temp-openremote:/tmp
+
+    deploy:
+      replicas: 1
+      # Configure uninterrupted updates with rollback
+      update_config:
+        failure_action: rollback
+        order: start-first
+        delay: 20m

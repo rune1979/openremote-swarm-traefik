@@ -1,0 +1,26 @@
+version: "3.8"
+
+volumes:
+  traefik-vol:
+
+services:
+  traefik:
+    image: traefik:v2.6.0
+    stdin_open: true
+    tty: true
+    networks:
+      - traefik
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "$PWD/traefik.yml:/etc/traefik/traefik.yml:ro"
+      - "traefik-vol:/etc/traefik/acme"
+    ports:
+      - "80:80"
+      - "443:443"
+      # Openremote test      
+      - "8883:8883"
+      - "1883:1883"
+
+networks:
+  traefik:
+    external: true
